@@ -1,0 +1,285 @@
+# Add hosts to vCenter
+$c = Get-Credential
+connect-viserver s218439lo6vc60
+0..9 | select -first 1 |% {
+   Add-VMHost -Name "s606840lo6vh$($_ + 23)" -Location S606840_TOOLS_CL01 -Confirm:$false -Credential $c -Force -RunAsync
+}
+
+# Reset passwords (only works on ESXi 6+)
+$Passwords = @(
+   'dsfnijr423'
+   'gbonvfnvo2'
+)
+
+0..1 | % {
+    $name = "s606840lo6vh$($_ + 23)"
+    $vmhost = Get-VMHost "$($name).na.msmps.net"
+    $esxcli = get-esxcli -vmhost $vmhost -v2
+    $esxcli = get-esxcli -vmhost $vmhost -v2 #Gain access to ESXCLI on the host.
+    $esxcliargs = $esxcli.system.account.set.CreateArgs() #Get Parameter list (Arguments)
+    $esxcliargs.id = 'root'
+    $esxcliargs.password = $Passwords[$_]
+    $esxcliargs.passwordconfirmation = $Passwords[$_]
+    Write-Host "$($vmhost): root  --  $($Passwords[$_])"
+    $esxcli.system.account.set.Invoke($esxcliargs)
+}
+
+## Check status of NICs
+Get-Cluster S606840_TOOLS_CL01 | Get-VMHost | sort Name | ForEach-Object {
+            $_.Name.ToUpper()
+            $_ | Get-VMHostNetworkAdapter -Physical -Name @('vmnic0','vmnic1','vmnic6','vmnic7') | ForEach-Object {
+                        "   $($_.Name) $($_.BitRatePerSec)Mbps $(if ($_.BitRatePerSec -ne 1000) {'            <<== PROBLEM'}) "
+            }
+}
+
+
+S606840LO6VH23.NA.MSMPS.NET
+   vmnic0 1000Mbps
+   vmnic1 1000Mbps
+   vmnic6 1000Mbps
+   vmnic7 1000Mbps
+S606840LO6VH24.NA.MSMPS.NET
+   vmnic0 1000Mbps
+   vmnic1 1000Mbps
+   vmnic6 1000Mbps
+   vmnic7 1000Mbps
+S606840LO6VH25.NA.MSMPS.NET
+   vmnic0 1000Mbps
+   vmnic1 0Mbps             <<== PROBLEM
+   vmnic6 1000Mbps
+   vmnic7 1000Mbps
+S606840LO6VH26.NA.MSMPS.NET
+   vmnic0 1000Mbps
+   vmnic1 1000Mbps
+   vmnic6 1000Mbps
+   vmnic7 100Mbps             <<== PROBLEM
+S606840LO6VH27.NA.MSMPS.NET
+   vmnic0 1000Mbps
+   vmnic1 1000Mbps
+   vmnic6 1000Mbps
+   vmnic7 1000Mbps
+S606840LO6VH28.NA.MSMPS.NET
+   vmnic0 1000Mbps
+   vmnic1 1000Mbps
+   vmnic6 1000Mbps
+   vmnic7 1000Mbps
+S606840LO6VH29.NA.MSMPS.NET
+   vmnic0 1000Mbps
+   vmnic1 0Mbps             <<== PROBLEM
+   vmnic6 1000Mbps
+   vmnic7 1000Mbps
+S606840LO6VH30.NA.MSMPS.NET
+   vmnic0 1000Mbps
+   vmnic1 1000Mbps
+   vmnic6 1000Mbps
+   vmnic7 1000Mbps
+S606840LO6VH31.NA.MSMPS.NET
+   vmnic0 0Mbps             <<== PROBLEM
+   vmnic1 1000Mbps
+   vmnic6 1000Mbps
+   vmnic7 1000Mbps
+S606840LO6VH32.NA.MSMPS.NET
+   vmnic0 1000Mbps
+   vmnic1 1000Mbps
+   vmnic6 1000Mbps
+   vmnic7 1000Mbps
+
+
+# Create computer accounts in AD
+$OU = "OU=ESXi,OU=MPS Infrastructure,DC=na,DC=msmps,DC=net"
+$group = Get-AdGroup "CN=ESXi Servers,OU=ESXi,OU=MPS Infrastructure,DC=na,DC=msmps,DC=net"
+
+$vmhosts = Get-Cluster S606840_TOOLS_CL01 | Get-VMHost | sort Name
+$vmhosts | % {
+            New-ADComputer -Name ($_ -split "\.")[0] -Path $OU -Enabled $True
+            Add-AdGroupMember -identity $group -member (Get-ADComputer ($_ -split "\.")[0])
+
+}
+
+
+# Create port groups
+$vmhosts = Get-Cluster S606840_TOOLS_CL01 | Get-VMHost | sort Name
+$VMHosts | % {
+   $vswitch = $null
+   $vswitch = $_ | Get-VirtualSwitch -Name vSwitch1
+   Write-Host "Adding VLANs to $($_.Name)..." -NoNewLine
+   try {
+      New-VirtualPortGroup -VirtualSwitch $vswitch -Name 'CTL-PML-Backup' -VLanId 6
+      New-VirtualPortGroup -VirtualSwitch $vswitch -Name 'svvsPRODMGMTa' -VLanId 26
+      New-VirtualPortGroup -VirtualSwitch $vswitch -Name 'svvsJUMPKICK' -VLanId 640
+      New-VirtualPortGroup -VirtualSwitch $vswitch -Name 'PML-Access' -VLanId 3251
+      New-VirtualPortGroup -VirtualSwitch $vswitch -Name 'PML-Monitoring' -VLanId 3252
+      New-VirtualPortGroup -VirtualSwitch $vswitch -Name 'PML-Backup' -VLanId 3254
+      Write-Host "DONE" -ForegroundColor Green
+   } catch {
+      Write-Host "FAILED" -ForegroundColor Red
+   }
+
+}
+
+
+# Rename datastore
+$vmhosts | % {
+$i = 0
+$name = ($_.Name -split "\.")[0]
+$_ | get-datastore | % {
+$_ | set-datastore -Name "local-$($name)_$($i)"
+$i++
+}
+
+}
+
+
+# Create Vmkernel Ports
+0..9 | % {
+   $i = $_
+   $vmhost = Get-VMHost -Name "s606840lo6vh$($_ + 23).na.msmps.net"
+$vmhost | % {
+   $vswitch = $null
+   $vswitch = $_ | Get-VirtualSwitch -Name vSwitch0
+   Write-Host "Adding Vmotion portgroup to $($_.Name)..." -NoNewLine
+   try {
+            $pg = New-VirtualPortGroup -VirtualSwitch $vswitch -Name 'VMotion'
+            
+New-VMHostNetworkAdapter -VMHost $_ -PortGroup $pg -VirtualSwitch $vswitch -IP "10.146.123.$($i * 2 + 11)" -SubnetMask "255.255.255.0" -VMotionEnabled:$true
+        Write-Host "DONE" -ForegroundColor Green
+   } catch {
+      Write-Host "FAILED" -ForegroundColor Red
+   }
+}
+}
+
+
+# Get HBA info:
+
+$clustername = "S606840_TOOLS_CL01"
+$clusterId = (Get-Cluster -Name $clustername).Id
+
+function Get-HumanFriendlyWwn {
+
+            Param (
+                        [Parameter(Mandatory=$True)]
+                        [System.Int64]
+                        $wwn
+            )
+            
+            $i = 1
+            $result = ""
+            foreach ($char in ('{0:X}' -f $wwn).ToCharArray()) {
+                        $result += $char 
+                        if ($i % 2 -eq 0) {
+                                    $result += ":"
+                        }
+                        $i++ 
+            }
+            $result.TrimEnd(':').ToLower()
+}
+
+
+$hostSystems = @()
+
+Write-Host "  Grabbing Host Info..." -NoNewline
+$properties = @()
+$properties += "Name"
+$properties += "Parent" 
+$properties += "Config.StorageDevice.HostBusAdapter"
+
+# Run query to pull data
+$hostSystems = Get-View -ViewType HostSystem -Property $properties
+# Only export ESXi systems (ignores legacy ESX systems)
+$esxiHostSystems = $hostSystems | Where-Object {$_.Parent -eq $clusterId}
+
+# HBA
+$hbaTable = @()
+foreach ($esxiHostSystem in $esxiHostSystems) {
+    foreach ($hba in ($esxiHostSystem.Config.StorageDevice.HostBusAdapter | Where-Object {$_.Key -match "^key-vim\.host\.FibreChannelHba-vmhba"})) {
+        $hbaTable += $hba | Select-Object -Property `
+            @{Label="hostname";Expression={$esxiHostSystem.Name}},
+            @{Label="wwnn";Expression={Get-HumanFriendlyWwn -wwn $hba.NodeWorldWideName}},
+            @{Label="wwpn";Expression={Get-HumanFriendlyWwn -wwn $hba.PortWorldWideName}}             
+    }
+}
+
+
+$hbaTable | ft -autosize
+
+
+hostname                    wwnn                    wwpn
+--------                    ----                    ----
+s606840lo6vh24.na.msmps.net 20:00:00:90:FA:F1:5A:9A 10:00:00:90:FA:F1:5A:9A
+s606840lo6vh24.na.msmps.net 20:00:00:90:FA:F1:5A:9B 10:00:00:90:FA:F1:5A:9B
+s606840lo6vh25.na.msmps.net 20:00:00:10:9B:1A:3C:FE 10:00:00:10:9B:1A:3C:FE
+s606840lo6vh25.na.msmps.net 20:00:00:10:9B:1A:3C:FF 10:00:00:10:9B:1A:3C:FF
+s606840lo6vh26.na.msmps.net 20:00:00:90:FA:F1:5A:D6 10:00:00:90:FA:F1:5A:D6
+s606840lo6vh26.na.msmps.net 20:00:00:90:FA:F1:5A:D7 10:00:00:90:FA:F1:5A:D7
+s606840lo6vh27.na.msmps.net 20:00:00:90:FA:F1:F6:9C 10:00:00:90:FA:F1:F6:9C
+s606840lo6vh27.na.msmps.net 20:00:00:90:FA:F1:F6:9D 10:00:00:90:FA:F1:F6:9D
+s606840lo6vh28.na.msmps.net 20:00:00:10:9B:1A:3C:DA 10:00:00:10:9B:1A:3C:DA
+s606840lo6vh28.na.msmps.net 20:00:00:10:9B:1A:3C:DB 10:00:00:10:9B:1A:3C:DB
+s606840lo6vh29.na.msmps.net 20:00:00:90:FA:F1:58:EA 10:00:00:90:FA:F1:58:EA
+s606840lo6vh29.na.msmps.net 20:00:00:90:FA:F1:58:EB 10:00:00:90:FA:F1:58:EB
+s606840lo6vh30.na.msmps.net 20:00:00:90:FA:F7:78:1C 10:00:00:90:FA:F7:78:1C
+s606840lo6vh30.na.msmps.net 20:00:00:90:FA:F7:78:1D 10:00:00:90:FA:F7:78:1D
+s606840lo6vh31.na.msmps.net 20:00:00:10:9B:16:42:AA 10:00:00:10:9B:16:42:AA
+s606840lo6vh31.na.msmps.net 20:00:00:10:9B:16:42:AB 10:00:00:10:9B:16:42:AB
+s606840lo6vh32.na.msmps.net 20:00:00:10:9B:0C:11:94 10:00:00:10:9B:0C:11:94
+s606840lo6vh32.na.msmps.net 20:00:00:10:9B:0C:11:95 10:00:00:10:9B:0C:11:95
+s606840lo6vh23.na.msmps.net 20:00:00:10:9B:1F:C9:92 10:00:00:10:9B:1F:C9:92
+s606840lo6vh23.na.msmps.net 20:00:00:10:9B:1F:C9:93 10:00:00:10:9B:1F:C9:93
+
+
+# Set advanced settigns for AD join:
+$vmhosts = Get-Cluster S606840_TOOLS_CL01 | Get-VMHost | sort Name
+$vmhosts | % {
+            Get-AdvancedSetting -Entity $_ -Name 'Config.HostAgent.plugins.hostsvc.esxAdminsGroup' | Set-AdvancedSetting -Value 'vISP_VC_ManagedHosts_Admins' -confirm:$false
+}
+
+# Set hostname of ESXi hosts
+$vmhosts = Get-Cluster S606840_TOOLS_CL01 | Get-VMHost | sort Name
+$vmhosts | % {
+            Write-Host "Processing $($_.name)"
+            $parts = $_.Name -split "\."
+            $newName = $parts[0]
+            $domainName = $parts[1..($parts.Length - 1)] -join '.'
+            Write-Host "  Setting Domain name to $($domainName)"
+            Get-VMHostNetwork -VMHost $_ | Set-VMHostNetwork -DomainName $domainName | Out-Null
+            Write-Host "  Setting hostname to $($newName)"
+            $esxcli = Get-EsxCli -VMHost $_.Name
+            $esxcli.system.hostname.set($null,$newName,$null) | Out-Null
+}
+
+# Set Active/Standby for Vmkernels
+$vmhosts | % {
+            $_ | Get-VirtualPortGroup -Name "Management Network" | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic0 -MakeNicStandby vmnic7
+            $_ | Get-VirtualPortGroup -Name VMotion | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic7 -MakeNicStandby vmnic0
+
+}
+
+
+# Add to domain
+$adCreds = Get-Credential
+$vmhosts[2..9] | % {
+    Get-VMHostAuthentication -VMHost $_ | Set-VMHostAuthentication -Domain "na.msmps.net" -credential $adCreds -JoinDomain:$true -Confirm:$false
+
+}
+
+
+# Enable SSH
+$vmhosts | % {
+            $_ | Get-VMHostService | ? {$_.Key -eq “TSM-SSH”} | Start-VMHostService
+
+}
+
+MANUAL FIRMWARE UPGRADE:
+Copy files to all ESXi hosts and follow this:
+https://confluence.savvis.net/x/bLbmC
+
+Run firmware upgrade:
+cd /vmfs/volumes/local-$(hostname)_0/fw
+tar xvf ESXi6.0LPE12xxx-3PAR.tar.gz
+cd 3PAR
+./hpsetup
+
+
+Confirm it was updated:
+/usr/lib/vmware/vmkmgmt_keyval/vmkmgmt_keyval -a | egrep 'LightPulse|FW'
