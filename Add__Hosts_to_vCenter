@@ -1,0 +1,6 @@
+# Add hosts to vCenter
+$c = Get-Credential
+connect-viserver s218439lo6vc60
+0..9 | select -first 1 |% {
+   Add-VMHost -Name "s606840lo6vh$($_ + 23)" -Location S606840_TOOLS_CL01 -Confirm:$false -Credential $c -Force -RunAsync
+}
