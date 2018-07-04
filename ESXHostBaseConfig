@@ -10,7 +10,7 @@ Connect-VIServer -Server $ESXiHost -User root -Password yrGCM7vPu
 Get-VirtualSwitch -Name vSwitch0 | Add-VirtualSwitchPhysicalNetworkAdapter -VMHostPhysicalNic (Get-VMHostNetworkAdapter -Physical -Name "vmnic2")
 #Add VMKernel Port to vSwitch0
 New-VMHostNetworkAdapter -VMHost $ESXiHost -PortGroup VMKernel -VirtualSwitch vSwitch0 -IP $VMKIP -SubnetMask $VMKSUB -VMotionEnabled:$true
-#Set VMKernel vmnic failover order
+#Set VMKernel Network failover order
 Get-VMHost $ESXiHost | Get-VirtualPortGroup -Name VMKernel | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic2 -MakeNicStandby vmnic0
 #Set Management Network Failover Order
 Get-VMHost $ESXiHost | Get-VirtualPortGroup -Name "Management Network" | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic2 -MakeNicStandby vmnic0
