@@ -1,0 +1,18 @@
+Add-PsSnapin VMware.VimAutomation.Core -ea "SilentlyContinue"
+#ESXi Server IP Address
+$ESXiHost = "10.86.69.210"
+#VMKernel IP Address
+$VMKIP = "10.86.69.211"
+#VMKernel Subnet Mask
+$VMKSUB = "255.255.224.0"
+Connect-VIServer -Server $ESXiHost -User root -Password yrGCM7vPu
+#Add vmnic3ic2 to vSwitch0
+Get-VirtualSwitch -Name vSwitch0 | Add-VirtualSwitchPhysicalNetworkAdapter -VMHostPhysicalNic (Get-VMHostNetworkAdapter -Physical -Name "vmnic2")
+#Add VMKernel Port to vSwitch0
+New-VMHostNetworkAdapter -VMHost $ESXiHost -PortGroup VMKernel -VirtualSwitch vSwitch0 -IP $VMKIP -SubnetMask $VMKSUB -VMotionEnabled:$true
+#Set VMKernel vmnic failover order
+Get-VMHost $ESXiHost | Get-VirtualPortGroup -Name VMKernel | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic2 -MakeNicStandby vmnic0
+#Set Management Network Failover Order
+Get-VMHost $ESXiHost | Get-VirtualPortGroup -Name "Management Network" | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic2 -MakeNicStandby vmnic0
+#Create vSwitch1
+New-VirtualSwitch -VMHost $ESXiHost -Name vSwitch1 -Nic vmnic1,vmnic3
