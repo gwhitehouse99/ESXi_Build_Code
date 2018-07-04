@@ -1,0 +1,19 @@
+# Create Port Groups
+$vmhosts = Get-Cluster S606840_TOOLS_CL01 | Get-VMHost | sort Name
+$VMHosts | % {
+   $vswitch = $null
+   $vswitch = $_ | Get-VirtualSwitch -Name vSwitch1
+   Write-Host "Adding VLANs to $($_.Name)..." -NoNewLine
+   try {
+      New-VirtualPortGroup -VirtualSwitch $vswitch -Name 'CTL-PML-Backup' -VLanId 6
+      New-VirtualPortGroup -VirtualSwitch $vswitch -Name 'svvsPRODMGMTa' -VLanId 26
+      New-VirtualPortGroup -VirtualSwitch $vswitch -Name 'svvsJUMPKICK' -VLanId 640
+      New-VirtualPortGroup -VirtualSwitch $vswitch -Name 'PML-Access' -VLanId 3251
+      New-VirtualPortGroup -VirtualSwitch $vswitch -Name 'PML-Monitoring' -VLanId 3252
+      New-VirtualPortGroup -VirtualSwitch $vswitch -Name 'PML-Backup' -VLanId 3254
+      Write-Host "DONE" -ForegroundColor Green
+   } catch {
+      Write-Host "FAILED" -ForegroundColor Red
+   }
+
+}
