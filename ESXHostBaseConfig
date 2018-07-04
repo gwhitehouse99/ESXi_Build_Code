@@ -6,7 +6,7 @@ $VMKIP = "10.86.69.211"
 #VMKernel Subnet Mask
 $VMKSUB = "255.255.224.0"
 Connect-VIServer -Server $ESXiHost -User root -Password yrGCM7vPu
-#Add vmnic3ic2 to vSwitch0
+#Add vmnic2 to vSwitch0
 Get-VirtualSwitch -Name vSwitch0 | Add-VirtualSwitchPhysicalNetworkAdapter -VMHostPhysicalNic (Get-VMHostNetworkAdapter -Physical -Name "vmnic2")
 #Add VMKernel Port to vSwitch0
 New-VMHostNetworkAdapter -VMHost $ESXiHost -PortGroup VMKernel -VirtualSwitch vSwitch0 -IP $VMKIP -SubnetMask $VMKSUB -VMotionEnabled:$true
